@@ -132,7 +132,7 @@ class WebScraper:
             )[0]
         except IndexError:
             try:
-                content = ''.join(
+                content = "".join(
                     comment_element.xpath(
                         './div[contains(@class, "thread-comment__container")]'
                         '/div[contains(@class, "thread-comment__wrapper")]'
@@ -199,7 +199,36 @@ class WebScraper:
                 (web_driver, tree) = self._navigate_to_url(
                     web_driver=web_driver, url=url
                 )
-                
+
+                # Click load more comments
+                while True:
+                    try:
+                        # Find all "Load More" buttons
+                        buttons = web_driver.find_elements(
+                            By.CSS_SELECTOR,
+                            "button.jsx-4001123469.thread-comments__load-more",
+                        )
+                        if not buttons:
+                            break  # exit loop when no more buttons
+
+                        for button in buttons:
+                            try:
+                                # Wait until button is clickable
+                                WebDriverWait(web_driver, 10).until(
+                                    EC.element_to_be_clickable(button)
+                                )
+                                button.click()
+                                print("Clicked a 'Load More' button")
+                            except Exception as e:
+                                print(f"Could not click a button: {e}")
+                    except Exception as e:
+                        print(f"Error finding buttons: {e}")
+                        break
+
+                # Update tree
+                tree = self._update_lxml_tree(web_driver)
+
+                # Extract nested comments
                 number_of_comments = 0
                 try:
                     number_of_comments = int(
