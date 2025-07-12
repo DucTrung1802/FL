@@ -21,13 +21,18 @@ SCRAPER_BASE_WAIT_TIME = 1
 def subtract_time(text):
     now = datetime.now()
 
-    # Match a number and unit (e.g., "5 năm", "3 ngày", "7 giờ")
-    match = re.search(r"(\d+)\s*(năm|tháng|ngày|giờ|phút)", text)
-    if not match:
-        raise ValueError("No valid time expression found in string.")
-
-    value = int(match.group(1))
-    unit = match.group(2)
+    # Special case: handle "một năm" as 1 year
+    text = text.strip()
+    if re.search(r"\bmột\s+năm\b", text, re.IGNORECASE):
+        value = 1
+        unit = "năm"
+    else:
+        # Match a number and unit (e.g., "5 năm", "3 ngày", "7 giờ")
+        match = re.search(r"(\d+)\s*(năm|tháng|ngày|giờ|phút)", text)
+        if not match:
+            raise ValueError("No valid time expression found in string.")
+        value = int(match.group(1))
+        unit = match.group(2)
 
     if unit == "năm":
         result = now - relativedelta(years=value)
@@ -244,23 +249,29 @@ class WebScraper:
                 )
 
                 # Find all pages
-                pages = None
+                page_numbers = None
                 try:
-                    pages = web_driver.find_elements(
-                        By.CSS_SELECTOR,
-                        "a.jsx-2305813501.page",
+                    half = (
+                        len(
+                            web_driver.find_elements(
+                                By.CSS_SELECTOR,
+                                "a.jsx-2305813501.page",
+                            )
+                        )
+                        // 2
                     )
-                    half = len(pages) // 2
-                    pages = pages[:half]
+                    page_numbers = range(0, half)
                 except:
                     pass
 
                 number_of_comments = 0
                 comment_list = []
 
-                if not pages:
+                if not page_numbers:
                     number_of_comments_in_page, comment_dictionary_in_page = (
-                        self.extract_comments_in_a_page(web_driver=web_driver)
+                        self.extract_comments_in_a_page(
+                            web_driver=web_driver, tree=tree
+                        )
                     )
                     number_of_comments = number_of_comments_in_page
                     comment_list = comment_dictionary_in_page
@@ -273,9 +284,15 @@ class WebScraper:
                     number_of_comments = number_of_comments_in_page
                     comment_list.extend(comment_dictionary_in_page)
 
-                    for page in pages[1:]:
-                        href = page.get_attribute("href")
+                    for index in page_numbers[1:]:
+                        pages = web_driver.find_elements(
+                            By.CSS_SELECTOR,
+                            "a.jsx-2305813501.page",
+                        )
+                        href = pages[index].get_attribute("href")
                         web_driver.get(href)
+
+                        tree = self._update_lxml_tree(web_driver=web_driver)
 
                         title_xpath = '//*[@id="__next"]/div[1]/div/div[2]/div[2]/div[1]/div/div/div[1]/main/div[1]/div/h1'
 
@@ -283,8 +300,6 @@ class WebScraper:
                         WebDriverWait(web_driver, 10).until(
                             EC.presence_of_element_located((By.XPATH, title_xpath))
                         )
-
-                        tree = self._update_lxml_tree(web_driver=web_driver)
 
                         number_of_comments_in_page, comment_dictionary_in_page = (
                             self.extract_comments_in_a_page(
