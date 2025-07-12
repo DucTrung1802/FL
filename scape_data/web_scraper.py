@@ -121,20 +121,57 @@ class WebScraper:
             '/a[contains(@class, "thread-comment__date")]'
             "/span/text()"
         )[0]
-        content = comment_element.xpath(
-            './div[contains(@class, "thread-comment__container")]'
-            '/div[contains(@class, "thread-comment__wrapper")]'
-            '/div[contains(@class, "thread-comment__box")]'
-            '/div[contains(@class, "thread-comment__content")]'
-            '//span[contains(@class, "xf-body-paragraph")]/text()'
-        )[0]
 
-        return {
+        try:
+            content = comment_element.xpath(
+                './div[contains(@class, "thread-comment__container")]'
+                '/div[contains(@class, "thread-comment__wrapper")]'
+                '/div[contains(@class, "thread-comment__box")]'
+                '/div[contains(@class, "thread-comment__content")]'
+                '//span[contains(@class, "xf-body-paragraph")]/text()'
+            )[0]
+        except IndexError:
+            try:
+                content = ''.join(
+                    comment_element.xpath(
+                        './div[contains(@class, "thread-comment__container")]'
+                        '/div[contains(@class, "thread-comment__wrapper")]'
+                        '/div[contains(@class, "thread-comment__box")]'
+                        '/div[contains(@class, "thread-comment__content")]'
+                        '/div/div[contains(@class, "xfBodyContainer")]/div/text()'
+                    )
+                ).strip()
+            except IndexError:
+                content = None  # fallback if nothing found
+
+        sub_comments = []
+        try:
+            sub_comment_container_element = comment_element.xpath(
+                './div[contains(@class, "thread-comment__container")]'
+                '/div[contains(@class, "thread-comment__wrapper")]'
+                '/div[contains(@class, "thread-comments__container")]'
+            )
+            if sub_comment_container_element:
+                sub_comment_elements = sub_comment_container_element[0].xpath(
+                    './div/div[contains(@class, "thread-comment")]'
+                )
+                for sub_comment_element in sub_comment_elements:
+                    sub_comments.append(
+                        self._extract_comment_internal(sub_comment_element)
+                    )
+
+        except:
+            pass
+
+        comment = {
             "author_name": author_name,
             "author_rank": author_rank,
             "time_past": subtract_time(time_past_str),
             "content": str(content).strip(),
+            "sub_comments": sub_comments,
         }
+
+        return comment
 
     def extract_comments(self, comment_section: html.HtmlElement) -> List:
         """
@@ -162,7 +199,7 @@ class WebScraper:
                 (web_driver, tree) = self._navigate_to_url(
                     web_driver=web_driver, url=url
                 )
-
+                
                 number_of_comments = 0
                 try:
                     number_of_comments = int(
@@ -184,6 +221,6 @@ class WebScraper:
 
         return {
             "url": url,
-            "number_of_comments": number_of_comments,
+            "number_of_comment": number_of_comments,
             "comments": comment_dictionary,
         }

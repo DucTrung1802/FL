@@ -6,7 +6,7 @@ def main():
     web_scraper = WebScraper()
     result = web_scraper.scrape_data(
         tinh_te_urls=[
-            "https://tinhte.vn/thread/tren-tay-ireader-ocean4-turbo-2025-man-dep-may-nhe-de-cam.4036243/"
+            "https://tinhte.vn/thread/deepseek-ai-tan-dung-tot-tai-nguyen-nho-nang-luc-lap-trinh-gan-dat-muc-assembly.3953999/"
         ]
     )
     with open("result.json", "w", encoding="utf-8") as f:
