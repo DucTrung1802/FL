@@ -191,6 +191,49 @@ class WebScraper:
 
         return comment_list
 
+    def extract_comments_in_a_page(
+        self, web_driver: ChromiumDriver, tree: html.HtmlElement
+    ) -> List:
+        # Click load more comments
+        # Find all "Load More" buttons
+        buttons = web_driver.find_elements(
+            By.CSS_SELECTOR,
+            "button.jsx-4001123469.thread-comments__load-more",
+        )
+
+        for button in buttons:
+            try:
+                # Wait until button is clickable
+                WebDriverWait(web_driver, 10).until(EC.element_to_be_clickable(button))
+                button.click()
+                time.sleep(2)
+                print("Clicked a 'Load More' button")
+            except Exception as e:
+                print(f"Could not click a button: {e}")
+
+        # Update tree
+        tree = self._update_lxml_tree(web_driver)
+
+        # Extract nested comments
+        number_of_comments = 0
+        try:
+            number_of_comments = int(
+                self._extract_text_by_xpath(
+                    tree=tree,
+                    xpath='//*[@id="__next"]/div[1]/div/div[2]/div[2]/div[1]/div/div/div[1]/div[2]/div[1]/div[1]/div[2]/span/span',
+                )
+            )
+        except:
+            pass
+
+        comment_section = tree.xpath(
+            '//*[@id="__next"]/div[1]/div/div[2]/div[2]/div[1]/div/div/div[1]/div[3]/div[2]/div'
+        )
+
+        comment_dictionary = self.extract_comments(comment_section=comment_section)
+
+        return number_of_comments, comment_dictionary
+
     def scrape_data(self, tinh_te_urls: List):
         web_driver, tree = self._initialize_web_driver_and_lxml_tree()
 
@@ -200,56 +243,58 @@ class WebScraper:
                     web_driver=web_driver, url=url
                 )
 
-                # Click load more comments
-                while True:
-                    try:
-                        # Find all "Load More" buttons
-                        buttons = web_driver.find_elements(
-                            By.CSS_SELECTOR,
-                            "button.jsx-4001123469.thread-comments__load-more",
-                        )
-                        if not buttons:
-                            break  # exit loop when no more buttons
-
-                        for button in buttons:
-                            try:
-                                # Wait until button is clickable
-                                WebDriverWait(web_driver, 10).until(
-                                    EC.element_to_be_clickable(button)
-                                )
-                                button.click()
-                                print("Clicked a 'Load More' button")
-                            except Exception as e:
-                                print(f"Could not click a button: {e}")
-                    except Exception as e:
-                        print(f"Error finding buttons: {e}")
-                        break
-
-                # Update tree
-                tree = self._update_lxml_tree(web_driver)
-
-                # Extract nested comments
-                number_of_comments = 0
+                # Find all pages
+                pages = None
                 try:
-                    number_of_comments = int(
-                        self._extract_text_by_xpath(
-                            tree=tree,
-                            xpath='//*[@id="__next"]/div[1]/div/div[2]/div[2]/div[1]/div/div/div[1]/div[2]/div[1]/div[1]/div[2]/span/span',
-                        )
+                    pages = web_driver.find_elements(
+                        By.CSS_SELECTOR,
+                        "a.jsx-2305813501.page",
                     )
+                    half = len(pages) // 2
+                    pages = pages[:half]
                 except:
                     pass
 
-                comment_section = tree.xpath(
-                    '//*[@id="__next"]/div[1]/div/div[2]/div[2]/div[1]/div/div/div[1]/div[3]/div[2]/div'
-                )
+                number_of_comments = 0
+                comment_list = []
 
-                comment_dictionary = self.extract_comments(
-                    comment_section=comment_section
-                )
+                if not pages:
+                    number_of_comments_in_page, comment_dictionary_in_page = (
+                        self.extract_comments_in_a_page(web_driver=web_driver)
+                    )
+                    number_of_comments = number_of_comments_in_page
+                    comment_list = comment_dictionary_in_page
+                else:
+                    number_of_comments_in_page, comment_dictionary_in_page = (
+                        self.extract_comments_in_a_page(
+                            web_driver=web_driver, tree=tree
+                        )
+                    )
+                    number_of_comments = number_of_comments_in_page
+                    comment_list.extend(comment_dictionary_in_page)
+
+                    for page in pages[1:]:
+                        href = page.get_attribute("href")
+                        web_driver.get(href)
+
+                        title_xpath = '//*[@id="__next"]/div[1]/div/div[2]/div[2]/div[1]/div/div/div[1]/main/div[1]/div/h1'
+
+                        # Wait until the element is present
+                        WebDriverWait(web_driver, 10).until(
+                            EC.presence_of_element_located((By.XPATH, title_xpath))
+                        )
+
+                        tree = self._update_lxml_tree(web_driver=web_driver)
+
+                        number_of_comments_in_page, comment_dictionary_in_page = (
+                            self.extract_comments_in_a_page(
+                                web_driver=web_driver, tree=tree
+                            )
+                        )
+                        comment_list.extend(comment_dictionary_in_page)
 
         return {
             "url": url,
             "number_of_comment": number_of_comments,
-            "comments": comment_dictionary,
+            "comments": comment_list,
         }
