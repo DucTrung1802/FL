@@ -256,8 +256,13 @@ class WebScraper:
         if os.path.exists(result_file):
             os.remove(result_file)
 
+        start_dictionary = {
+            "total_number_of_comments": 0,
+            "url_comments": [],
+        }
+
         with open(result_file, "w", encoding="utf-8") as f:
-            json.dump([], f, ensure_ascii=False, indent=2)
+            json.dump(start_dictionary, f, ensure_ascii=False, indent=2)
 
         if tinh_te_urls and isinstance(tinh_te_urls, list):
             for url in tinh_te_urls:
@@ -336,7 +341,8 @@ class WebScraper:
                 # Append result to JSON file incrementally
                 with open(result_file, "r+", encoding="utf-8") as f:
                     data = json.load(f)
-                    data.append(url_commnent)
+                    data["total_number_of_comments"] += number_of_comments
+                    data["url_comments"].append(url_commnent)
                     f.seek(0)
                     json.dump(data, f, ensure_ascii=False, indent=2)
                     f.truncate()  # Clear leftover data
