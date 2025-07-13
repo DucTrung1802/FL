@@ -6,7 +6,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 from lxml import html
-
+import json
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from dateutil.relativedelta import (
@@ -100,7 +101,9 @@ class WebScraper:
             )
         return ""
 
-    def _extract_comment_internal(self, comment_element: html.HtmlElement) -> Dict:
+    def _extract_comment_internal(
+        self, comment_element: html.HtmlElement
+    ) -> Tuple[int, Dict]:
         author_name = comment_element.xpath(
             './div[contains(@class, "thread-comment__container")]'
             '/div[contains(@class, "thread-comment__wrapper")]'
@@ -127,28 +130,28 @@ class WebScraper:
             "/span/text()"
         )[0]
 
-        try:
-            content = comment_element.xpath(
-                './div[contains(@class, "thread-comment__container")]'
-                '/div[contains(@class, "thread-comment__wrapper")]'
-                '/div[contains(@class, "thread-comment__box")]'
-                '/div[contains(@class, "thread-comment__content")]'
-                '//span[contains(@class, "xf-body-paragraph")]/text()'
-            )[0]
-        except IndexError:
-            try:
-                content = "".join(
-                    comment_element.xpath(
-                        './div[contains(@class, "thread-comment__container")]'
-                        '/div[contains(@class, "thread-comment__wrapper")]'
-                        '/div[contains(@class, "thread-comment__box")]'
-                        '/div[contains(@class, "thread-comment__content")]'
-                        '/div/div[contains(@class, "xfBodyContainer")]/div/text()'
-                    )
-                ).strip()
-            except IndexError:
-                content = None  # fallback if nothing found
+        # List of XPaths to try, in order
+        xpaths = [
+            './div[contains(@class, "thread-comment__container")]/div[contains(@class, "thread-comment__wrapper")]/div[contains(@class, "thread-comment__box")]/div[contains(@class, "thread-comment__content")]//span[contains(@class, "xf-body-paragraph")]/text()',
+            './div[contains(@class, "thread-comment__container")]/div[contains(@class, "thread-comment__wrapper")]/div[contains(@class, "thread-comment__box")]/div[contains(@class, "thread-comment__content")]/div/div[contains(@class, "xfBodyContainer")]/div/text()',
+        ]
 
+        content = None  # Default fallback
+
+        for xpath in xpaths:
+            try:
+                result = comment_element.xpath(xpath)
+                if result:
+                    # Join text and normalize whitespace
+                    text = " ".join(result).strip()
+                    if text:  # Check if text is non-empty
+                        content = text
+                        break  # Stop at first successful result
+            except Exception as e:
+                # Optionally log or debug: print(f"XPath failed: {xpath} ({e})")
+                continue  # Try the next XPath
+
+        number_of_comment = 1
         sub_comments = []
         try:
             sub_comment_container_element = comment_element.xpath(
@@ -156,14 +159,15 @@ class WebScraper:
                 '/div[contains(@class, "thread-comment__wrapper")]'
                 '/div[contains(@class, "thread-comments__container")]'
             )
+
             if sub_comment_container_element:
                 sub_comment_elements = sub_comment_container_element[0].xpath(
                     './div/div[contains(@class, "thread-comment")]'
                 )
                 for sub_comment_element in sub_comment_elements:
-                    sub_comments.append(
-                        self._extract_comment_internal(sub_comment_element)
-                    )
+                    result = self._extract_comment_internal(sub_comment_element)
+                    number_of_comment += result[0]
+                    sub_comments.append(result[1])
 
         except:
             pass
@@ -171,14 +175,14 @@ class WebScraper:
         comment = {
             "author_name": author_name,
             "author_rank": author_rank,
-            "time_past": subtract_time(time_past_str),
+            "timestamp": subtract_time(time_past_str),
             "content": str(content).strip(),
             "sub_comments": sub_comments,
         }
 
-        return comment
+        return number_of_comment, comment
 
-    def extract_comments(self, comment_section: html.HtmlElement) -> List:
+    def extract_comments(self, comment_section: html.HtmlElement) -> Tuple[int, List]:
         """
         Recursively extract comment data and nested replies
         """
@@ -190,15 +194,18 @@ class WebScraper:
             './div[contains(@class, "thread-comment")]'
         )
 
+        number_of_comment = 0
         comment_list = []
         for outer_comment in outer_comment_elements:
-            comment_list.append(self._extract_comment_internal(outer_comment))
+            result = self._extract_comment_internal(outer_comment)
+            number_of_comment += result[0]
+            comment_list.append(result[1])
 
-        return comment_list
+        return number_of_comment, comment_list
 
     def extract_comments_in_a_page(
         self, web_driver: ChromiumDriver, tree: html.HtmlElement
-    ) -> List:
+    ) -> Tuple[int, List]:
         # Click load more comments
         # Find all "Load More" buttons
         buttons = web_driver.find_elements(
@@ -210,37 +217,47 @@ class WebScraper:
             try:
                 # Wait until button is clickable
                 WebDriverWait(web_driver, 10).until(EC.element_to_be_clickable(button))
+                comments_before = len(
+                    web_driver.find_elements(
+                        By.CSS_SELECTOR, ".thread-comment__wrapper"
+                    )
+                )
                 button.click()
-                time.sleep(2)
-                print("Clicked a 'Load More' button")
+                WebDriverWait(web_driver, 10).until(
+                    lambda driver: len(
+                        driver.find_elements(
+                            By.CSS_SELECTOR, ".thread-comment__wrapper"
+                        )
+                    )
+                    > comments_before
+                )
             except Exception as e:
                 print(f"Could not click a button: {e}")
 
         # Update tree
         tree = self._update_lxml_tree(web_driver)
 
-        # Extract nested comments
-        number_of_comments = 0
-        try:
-            number_of_comments = int(
-                self._extract_text_by_xpath(
-                    tree=tree,
-                    xpath='//*[@id="__next"]/div[1]/div/div[2]/div[2]/div[1]/div/div/div[1]/div[2]/div[1]/div[1]/div[2]/span/span',
-                )
-            )
-        except:
-            pass
-
         comment_section = tree.xpath(
             '//*[@id="__next"]/div[1]/div/div[2]/div[2]/div[1]/div/div/div[1]/div[3]/div[2]/div'
         )
 
-        comment_dictionary = self.extract_comments(comment_section=comment_section)
+        number_of_comments, comment_dictionary = self.extract_comments(
+            comment_section=comment_section
+        )
 
         return number_of_comments, comment_dictionary
 
     def scrape_data(self, tinh_te_urls: List):
         web_driver, tree = self._initialize_web_driver_and_lxml_tree()
+
+        result_file = "result.json"
+
+        # Delete the existing file
+        if os.path.exists(result_file):
+            os.remove(result_file)
+
+        with open(result_file, "w", encoding="utf-8") as f:
+            json.dump([], f, ensure_ascii=False, indent=2)
 
         if tinh_te_urls and isinstance(tinh_te_urls, list):
             for url in tinh_te_urls:
@@ -281,7 +298,7 @@ class WebScraper:
                             web_driver=web_driver, tree=tree
                         )
                     )
-                    number_of_comments = number_of_comments_in_page
+                    number_of_comments += number_of_comments_in_page
                     comment_list.extend(comment_dictionary_in_page)
 
                     for index in page_numbers[1:]:
@@ -306,10 +323,22 @@ class WebScraper:
                                 web_driver=web_driver, tree=tree
                             )
                         )
+
+                        number_of_comments += number_of_comments_in_page
                         comment_list.extend(comment_dictionary_in_page)
 
-        return {
-            "url": url,
-            "number_of_comment": number_of_comments,
-            "comments": comment_list,
-        }
+                url_commnent = {
+                    "url": url,
+                    "number_of_comment": number_of_comments,
+                    "comments": comment_list,
+                }
+
+                # Append result to JSON file incrementally
+                with open(result_file, "r+", encoding="utf-8") as f:
+                    data = json.load(f)
+                    data.append(url_commnent)
+                    f.seek(0)
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                    f.truncate()  # Clear leftover data
+
+        web_driver.quit()
